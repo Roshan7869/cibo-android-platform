@@ -1,14 +1,9 @@
 package com.cebo.bus.gnss
 
 import kotlin.math.exp
-import kotlin.math.max
-import kotlin.math.min
 
 /**
- * GnssQualityMonitor
- *
  * Pure logic GNSS health evaluation engine.
- * No Android dependencies.
  */
 class GnssQualityMonitor(
     private val config: HealthConfig = HealthConfig()
@@ -26,10 +21,7 @@ class GnssQualityMonitor(
     fun updateStatus(status: GnssStatusSnapshot, timestampMillis: Long) {
         satUsedBuffer.add(status.satellitesUsed)
         navicBuffer.add(status.navicDetected)
-
-        val medianSnr = status.medianSnrOrZero()
-        medianSnrBuffer.add(medianSnr)
-
+        medianSnrBuffer.add(status.medianSnr)
         computeSnapshot(status, timestampMillis)
     }
 
@@ -46,12 +38,7 @@ class GnssQualityMonitor(
 
     fun currentSnapshot(): QualitySnapshot = lastSnapshot
 
-    fun isQualifiedForDeployment(): Boolean = lastSnapshot.qualifiedForDeployment
-
-    private fun computeSnapshot(
-        status: GnssStatusSnapshot,
-        timestampMillis: Long
-    ) {
+    private fun computeSnapshot(status: GnssStatusSnapshot, timestampMillis: Long) {
         val rollingSatAvg = satUsedBuffer.average()
         val rollingSnrMedian = medianSnrBuffer.median()
 
@@ -59,32 +46,19 @@ class GnssQualityMonitor(
         val dualFreq = dualFreqBuffer.fractionTrue() > 0.0
         val rawAvailable = rawBuffer.fractionTrue() > 0.0
 
-        val satScore = normalize(
-            rollingSatAvg,
-            config.minSatUsed.toDouble(),
-            config.optimalSatUsed.toDouble()
-        )
-
+        val satScore = normalize(rollingSatAvg, config.minSatUsed.toDouble(), config.optimalSatUsed.toDouble())
         val snrScore = 1 - exp(-rollingSnrMedian / config.snrDecayFactor)
-
         val dualScore = if (dualFreq) config.dualFrequencyWeight else 0.0
         val navicScore = if (navicDetected) config.navicBonus else 0.0
-
-        val freshnessPenalty =
-            if (lastGoodFixAgeSeconds > config.staleThresholdSeconds)
-                config.stalePenalty
-            else 0.0
+        val freshnessPenalty = if (lastGoodFixAgeSeconds > config.staleThresholdSeconds) config.stalePenalty else 0.0
 
         val healthScore = (
             config.satelliteWeight * satScore +
-            config.snrWeight * snrScore +
-            dualScore +
-            navicScore -
-            freshnessPenalty
-        ).coerceIn(0.0, 1.0)
+                config.snrWeight * snrScore +
+                dualScore + navicScore - freshnessPenalty
+            ).coerceIn(0.0, 1.0)
 
-        val qualified =
-            healthScore >= config.qualificationThreshold &&
+        val qualified = healthScore >= config.qualificationThreshold &&
             rollingSatAvg >= config.minSatUsed &&
             rollingSnrMedian >= config.minMedianSnr
 
@@ -112,23 +86,7 @@ class GnssQualityMonitor(
         return (value - min) / (max - min)
     }
 
-    private fun emptySnapshot(): QualitySnapshot =
-        QualitySnapshot(
-            timestampMillis = 0L,
-            satellitesInView = 0,
-            satellitesUsed = 0,
-            constellationCount = emptyMap(),
-            medianSnr = 0.0,
-            meanSnr = 0.0,
-            navicDetected = false,
-            dualFrequencySupported = false,
-            rawMeasurementsAvailable = false,
-            rollingSatUsedAvg = 0.0,
-            rollingMedianSnr = 0.0,
-            healthScore = 0.0,
-            qualifiedForDeployment = false,
-            lastGoodFixAgeSeconds = 0.0
-        )
+    private fun emptySnapshot(): QualitySnapshot = QualitySnapshot()
 
     data class HealthConfig(
         val rollingWindowSize: Int = 10,
@@ -145,11 +103,25 @@ class GnssQualityMonitor(
         val stalePenalty: Double = 0.2,
         val qualificationThreshold: Double = 0.6
     )
+
+    data class QualitySnapshot(
+        val timestampMillis: Long = 0L,
+        val satellitesInView: Int = 0,
+        val satellitesUsed: Int = 0,
+        val constellationCount: Map<Int, Int> = emptyMap(),
+        val medianSnr: Double = 0.0,
+        val meanSnr: Double = 0.0,
+        val navicDetected: Boolean = false,
+        val dualFrequencySupported: Boolean = false,
+        val rawMeasurementsAvailable: Boolean = false,
+        val rollingSatUsedAvg: Double = 0.0,
+        val rollingMedianSnr: Double = 0.0,
+        val healthScore: Double = 0.0,
+        val qualifiedForDeployment: Boolean = false,
+        val lastGoodFixAgeSeconds: Double = 0.0
+    )
 }
 
-/**
- * RollingBuffer - fixed size circular buffer.
- */
 class RollingBuffer<T : Any>(
     private val capacity: Int
 ) {
@@ -162,8 +134,7 @@ class RollingBuffer<T : Any>(
 
     fun average(): Double {
         if (data.isEmpty()) return 0.0
-        return data.mapNotNull { (it as? Number)?.toDouble() }
-            .average()
+        return data.mapNotNull { (it as? Number)?.toDouble() }.average()
     }
 
     fun median(): Double {
@@ -171,10 +142,7 @@ class RollingBuffer<T : Any>(
         if (nums.isEmpty()) return 0.0
         val sorted = nums.sorted()
         val mid = sorted.size / 2
-        return if (sorted.size % 2 == 0)
-            (sorted[mid - 1] + sorted[mid]) / 2
-        else
-            sorted[mid]
+        return if (sorted.size % 2 == 0) (sorted[mid - 1] + sorted[mid]) / 2 else sorted[mid]
     }
 
     fun fractionTrue(): Double {
@@ -184,10 +152,7 @@ class RollingBuffer<T : Any>(
     }
 }
 
-/**
- * Extension helper to map snapshot back if needed internally.
- */
-private fun QualitySnapshot.toStatusSnapshot(): GnssStatusSnapshot =
+private fun GnssQualityMonitor.QualitySnapshot.toStatusSnapshot(): GnssStatusSnapshot =
     GnssStatusSnapshot(
         satellitesInView = satellitesInView,
         satellitesUsed = satellitesUsed,
@@ -195,6 +160,3 @@ private fun QualitySnapshot.toStatusSnapshot(): GnssStatusSnapshot =
         constellationCount = constellationCount,
         medianSnr = medianSnr
     )
-
-private fun GnssStatusSnapshot.medianSnrOrZero(): Double =
-    medianSnr

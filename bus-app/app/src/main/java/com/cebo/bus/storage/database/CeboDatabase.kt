@@ -5,27 +5,20 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.cebo.bus.storage.dao.LocationDao
+import com.cebo.bus.storage.dao.RouteDao
 
 /**
- * CeboDatabase
- *
  * Central Room database definition for CEBO platform.
- *
- * Responsibilities:
- * - Register entities
- * - Expose DAO access
- * - Provide thread-safe singleton instance
- *
- * No business logic.
  */
 @Database(
-    entities = [LocationEntity::class],
+    entities = [LocationEntity::class, RouteEntity::class],
     version = 1,
     exportSchema = true
 )
 abstract class CeboDatabase : RoomDatabase() {
 
     abstract fun locationDao(): LocationDao
+    abstract fun routeDao(): RouteDao
 
     companion object {
 

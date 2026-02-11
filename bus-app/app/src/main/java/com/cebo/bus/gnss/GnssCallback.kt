@@ -1,18 +1,15 @@
 package com.cebo.bus.gnss
 
-import android.location.Location
 import android.location.GnssMeasurementsEvent
 import android.location.GnssStatus
+import android.location.Location
 import android.os.Build
 import androidx.annotation.RequiresApi
 import com.cebo.bus.core.model.Accuracy
 import com.cebo.bus.core.model.GeoPoint
 
 /**
- * GnssCallback
- *
  * Thin adapter layer between Android GNSS callbacks and CEBO domain events.
- * This class performs ONLY transformation, no validation, no filtering.
  */
 class GnssCallback(
     private val listener: Listener
@@ -30,38 +27,46 @@ class GnssCallback(
             longitude = location.longitude
         )
 
-        val accuracy = Accuracy.fromMeters(
-            location.accuracy.toDouble()
-        )
+        val accuracy = Accuracy.fromMeters(location.accuracy.toDouble())
 
         listener.onLocationMeasured(
             MeasuredLocation(
                 position = geoPoint,
                 accuracy = accuracy,
+                speedMps = location.speed.toDouble(),
+                bearingDegrees = location.bearing.toDouble(),
                 timestampMillis = location.time
             )
         )
     }
 
     fun onGnssStatusChanged(status: GnssStatus) {
-        var satellitesInView = status.satelliteCount
         var satellitesUsed = 0
         var navicDetected = false
+        val constellationCount = mutableMapOf<Int, Int>()
+        val snrValues = mutableListOf<Double>()
 
         for (i in 0 until status.satelliteCount) {
-            if (status.usedInFix(i)) {
-                satellitesUsed++
-            }
-            if (status.constellationType(i) == GnssStatus.CONSTELLATION_IRNSS) {
-                navicDetected = true
-            }
+            if (status.usedInFix(i)) satellitesUsed++
+            val constellation = status.constellationType(i)
+            constellationCount[constellation] = (constellationCount[constellation] ?: 0) + 1
+            if (constellation == GnssStatus.CONSTELLATION_IRNSS) navicDetected = true
+            snrValues.add(status.cn0DbHz(i).toDouble())
+        }
+
+        val medianSnr = snrValues.sorted().let { sorted ->
+            if (sorted.isEmpty()) 0.0
+            else if (sorted.size % 2 == 0) (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2
+            else sorted[sorted.size / 2]
         }
 
         listener.onGnssStatusUpdated(
             GnssStatusSnapshot(
-                satellitesInView = satellitesInView,
+                satellitesInView = status.satelliteCount,
                 satellitesUsed = satellitesUsed,
-                navicDetected = navicDetected
+                navicDetected = navicDetected,
+                constellationCount = constellationCount,
+                medianSnr = medianSnr
             )
         )
     }
@@ -86,20 +91,20 @@ class GnssCallback(
     }
 }
 
-/**
- * Domain snapshots used internally by GNSS layer
- */
-
 data class MeasuredLocation(
     val position: GeoPoint,
     val accuracy: Accuracy,
+    val speedMps: Double,
+    val bearingDegrees: Double,
     val timestampMillis: Long
 )
 
 data class GnssStatusSnapshot(
     val satellitesInView: Int,
     val satellitesUsed: Int,
-    val navicDetected: Boolean
+    val navicDetected: Boolean,
+    val constellationCount: Map<Int, Int> = emptyMap(),
+    val medianSnr: Double = 0.0
 )
 
 data class GnssMeasurementSnapshot(

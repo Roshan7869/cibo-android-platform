@@ -6,44 +6,31 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * SyncManager
- *
  * Handles offline-first batching and upload pipeline.
- *
- * Responsibilities:
- * - Fetch unsynced locations
- * - Compress payload
- * - Upload (stubbed transport layer)
- * - Mark as synced
- *
- * No direct DAO access.
- * No Android APIs.
  */
 class SyncManager(
     private val repository: LocationRepository,
     private val networkMonitor: NetworkMonitor,
     private val compressor: PayloadCompressor,
-    private val batchSize: Int = DEFAULT_BATCH_SIZE
+    private val batchSize: Int = DEFAULT_BATCH_SIZE,
+    private val syncEndpoint: String = DEFAULT_SYNC_ENDPOINT,
+    private val apiTokenProvider: () -> String? = { null }
 ) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private val isSyncing = AtomicBoolean(false)
 
-    /**
-     * Called whenever a new tracking state is stored.
-     * Triggers background sync attempt if network available.
-     */
     fun onNewTrackingState() {
         if (!networkMonitor.isConnected()) return
         attemptSync()
     }
 
-    /**
-     * Public manual trigger.
-     */
     fun triggerSync() {
         if (!networkMonitor.isConnected()) return
         attemptSync()
@@ -68,7 +55,6 @@ class SyncManager(
 
             val payload = buildPayload(batch)
             val compressed = compressor.compress(payload)
-
             val uploadSuccess = upload(compressed)
 
             if (!uploadSuccess) break
@@ -78,35 +64,52 @@ class SyncManager(
         }
     }
 
-    /**
-     * Converts entities to raw payload format.
-     * Keep minimal and flat for transport.
-     */
     private fun buildPayload(batch: List<LocationEntity>): String {
         val builder = StringBuilder()
         batch.forEach { entity ->
             builder.append(
                 "${entity.id},${entity.latitude},${entity.longitude}," +
-                "${entity.speedMps},${entity.headingDegrees}," +
-                "${entity.accuracyMeters},${entity.confidence}," +
-                "${entity.timestampMillis}\n"
+                    "${entity.speedMps},${entity.headingDegrees}," +
+                    "${entity.accuracyMeters},${entity.confidence}," +
+                    "${entity.timestampMillis}\n"
             )
         }
         return builder.toString()
     }
 
-    /**
-     * Transport layer placeholder.
-     * Replace with Retrofit/WebSocket implementation later.
-     */
     private suspend fun upload(data: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
-            // TODO: Implement actual API call
-            true
+            val url = URL(syncEndpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                doOutput = true
+                setRequestProperty("Content-Type", "text/plain")
+                setRequestProperty("Content-Encoding", "gzip")
+                setRequestProperty("Accept", "application/json")
+                apiTokenProvider()?.takeIf { it.isNotBlank() }?.let {
+                    setRequestProperty("Authorization", "Bearer $it")
+                }
+            }
+
+            try {
+                connection.outputStream.use { output: OutputStream ->
+                    output.write(data)
+                    output.flush()
+                }
+                val code = connection.responseCode
+                code in 200..299
+            } catch (_: Exception) {
+                false
+            } finally {
+                connection.disconnect()
+            }
         }
     }
 
     companion object {
         private const val DEFAULT_BATCH_SIZE = 50
+        private const val DEFAULT_SYNC_ENDPOINT = "https://example.invalid/telemetry/batch"
     }
 }
