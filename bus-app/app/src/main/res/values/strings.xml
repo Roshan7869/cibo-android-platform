@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">CEBO Bus</string>
+    <string name="tracking_active_title">CEBO Bus Tracking Active</string>
+    <string name="tracking_active_description">Tracking bus location in real-time</string>
+    <string name="status_tracking_on">Tracking ON</string>
+    <string name="status_signal_lost">Signal Lost</string>
+    <string name="status_tracking_off">Tracking OFF</string>
+</resources>
